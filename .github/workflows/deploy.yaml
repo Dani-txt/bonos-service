@@ -2,7 +2,7 @@ name: Desplegar microservicios en EKS (CI/CD)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ deploy ]
   workflow_dispatch:        # tambien se lanza a mano desde la pestana Actions
 
 env:
