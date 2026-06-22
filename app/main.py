@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .auth import usuario_actual
-from .db import conexion, dict_cursor, esperar_bd, init_schema
+from .db import conexion, dict_cursor, esperar_bd, init_schema, ping
 
 
 @asynccontextmanager
@@ -85,7 +85,18 @@ def mis_bonos(usuario: dict = Depends(usuario_actual)):
                 (usuario["id"],),
             )
             return {"reclamados": cur.fetchall()}
+    
+@app.get("/livez")
+def livez():
+    """Liveness: el proceso está vivo. NO depende de la BD."""
+    return {"alive": True, "service": "bonos-service"}
 
+@app.get("/readyz")
+def readyz():
+    """Readiness: listo para tráfico solo si Postgres responde."""
+    if not ping():
+        raise HTTPException(status_code=503, detail={"ready": False, "db": "down"})
+    return {"ready": True, "db": "up", "service": "bonos-service"}
 
 @app.post("/api/bonos/{codigo}/reclamar", status_code=201)
 def reclamar_bono(codigo: str, body: ReclamarRequest, usuario: dict = Depends(usuario_actual)):
