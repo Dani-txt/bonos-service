@@ -24,7 +24,7 @@ spec:
               app: bonos-service
       containers:
         - name: bonos-service
-          image: <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/bonos-service:latest
+          image: 248357130561.dkr.ecr.us-east-1.amazonaws.com/bonos-service:latest
           ports:
             - containerPort: 8004
           env:
