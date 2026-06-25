@@ -5,10 +5,6 @@ on:
     branches: [ deploy ]
   workflow_dispatch:        # tambien se lanza a mano desde la pestana Actions
 
-env:
-  AWS_REGION: us-east-1
-  CLUSTER_NAME: microservicios-eks
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -22,22 +18,27 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: 3. Login en Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: 4. Construir y subir las imágenes
+      - name: 4. Construir y subir imagen a ECR
         env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          REPO: ${{ secrets.ECR_REPOSITORY }}
+          SHA_TAG: ${{ github.sha }}
+          VERSION_TAG: v1.0.0   # subir manualmente este numero en cada release relevante
         run: |
-          for svc in casino-frontend casino-backend bonos-service apuestas-service estadisticas-service; do
-            docker build -t "$REGISTRY/$svc:$IMAGE_TAG" -t "$REGISTRY/$svc:latest" "./$svc"
-            docker push "$REGISTRY/$svc:$IMAGE_TAG"
-            docker push "$REGISTRY/$svc:latest"
-          done
+          docker build \
+            -t "$REGISTRY/$REPO:$SHA_TAG" \
+            -t "$REGISTRY/$REPO:latest" \
+            -t "$REGISTRY/$REPO:$VERSION_TAG" \
+            .
+          docker push "$REGISTRY/$REPO:$SHA_TAG"
+          docker push "$REGISTRY/$REPO:latest"
+          docker push "$REGISTRY/$REPO:$VERSION_TAG"
 
       - name: 5. Instalar kubectl en el runner
         run: |
@@ -45,28 +46,22 @@ jobs:
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/kubectl
 
-      - name: 6. Conectar kubectl al cluster
-        run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+      - name: 6. Conectar kubectl al cluster EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ secrets.EKS_CLUSTER_NAME }}" \
+            --region "${{ secrets.AWS_REGION }}"
 
-      - name: 7. Desplegar microservicios en EKS
+      - name: 7. Desplegar en EKS
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          for svc in casino-frontend casino-backend bonos-service apuestas-service estadisticas-service; do
-            sed -i "s|<ACCOUNT_ID>|$ACCOUNT_ID|g; s|<REGION>|$AWS_REGION|g; s|:latest|:$IMAGE_TAG|g" "$svc/k8s/deployment.yaml"
-            kubectl apply -f "$svc/k8s/deployment.yaml"
-            kubectl apply -f "$svc/k8s/service.yaml"
-          done
-          kubectl rollout status deployment/casino-frontend --timeout=180s
+          sed -i \
+            "s|<ACCOUNT_ID>|${{ secrets.AWS_ACCOUNT_ID }}|g; s|<REGION>|${{ secrets.AWS_REGION }}|g; s|:latest|:$IMAGE_TAG|g" \
+            k8s/deployment.yaml
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/hpa.yaml
 
-      - name: 8. Esperar al rollout y mostrar el resultado
-        run: |
-          kubectl rollout status deployment/casino-frontend --timeout=300s
-          kubectl rollout status deployment/casino-backend --timeout=300s
-          kubectl rollout status deployment/bonos-service --timeout=300s
-          kubectl rollout status deployment/apuestas-service --timeout=300s
-          kubectl rollout status deployment/estadisticas-service --timeout=300s
-          kubectl get pods -o wide
-          echo "URL pública del LoadBalancer (frontend):"
-          kubectl get svc casino-frontend -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'; echo
+      - name: 8. Esperar al rollout
+        run: kubectl rollout status deployment/bonos-service --timeout=300s
